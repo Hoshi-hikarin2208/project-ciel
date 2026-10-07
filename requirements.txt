@@ -1,0 +1,11 @@
+# Ciel 3.1 — Python 3.14 / Windows friendly
+# PyAudio is intentionally NOT required.
+# Ciel records microphone audio with sounddevice.
+
+requests>=2.32
+SpeechRecognition>=3.14
+pyttsx3>=2.99
+psutil>=7.0
+sounddevice>=0.5
+numpy>=2.4
+pyautogui>=0.9
