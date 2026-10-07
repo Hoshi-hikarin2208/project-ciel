@@ -9,12 +9,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
-from ciel import CielEngine
+from ciel import AI_PROVIDERS, CielEngine
 
 
 HOST = "127.0.0.1"
 PORT = 8765
 PAGE = Path(__file__).with_name("ciel.html")
+CONTROLS_SCRIPT = Path(__file__).with_name("ciel-controls.js")
 EVENTS = deque(maxlen=100)
 EVENT_LOCK = threading.Lock()
 EVENT_ID = 0
@@ -72,6 +73,20 @@ class CielWebHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_controls_script(self):
+        try:
+            body = CONTROLS_SCRIPT.read_bytes()
+        except OSError:
+            self.send_error(500, "ciel-controls.js could not be read")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
     def origin_is_local(self):
         origin = self.headers.get("Origin")
         if not origin:
@@ -92,6 +107,10 @@ class CielWebHandler(BaseHTTPRequestHandler):
             self.send_page()
             return
 
+        if parsed.path == "/assets/ciel-controls.js":
+            self.send_controls_script()
+            return
+
         if parsed.path == "/api/status":
             with self.engine.reminders_lock:
                 reminders = sorted(
@@ -102,6 +121,7 @@ class CielWebHandler(BaseHTTPRequestHandler):
                 event_cursor = EVENT_ID
             self.send_json(200, {
                 "api_ready": bool(self.engine.api_key),
+                "provider": self.engine.provider,
                 "reminders": reminders[:8],
                 "event_cursor": event_cursor,
             })
@@ -125,7 +145,7 @@ class CielWebHandler(BaseHTTPRequestHandler):
         if not self.origin_is_local():
             self.send_json(403, {"error": "Requests must come from the local Ciel page."})
             return
-        if self.path == "/api/configure-key" and not self.headers.get("Origin"):
+        if self.path in {"/api/configure-key", "/api/configure-provider"} and not self.headers.get("Origin"):
             self.send_json(403, {"error": "Open this setting from the local Ciel page."})
             return
 
@@ -188,6 +208,38 @@ class CielWebHandler(BaseHTTPRequestHandler):
                 })
                 return
             self.send_json(200, {"ok": True, "api_ready": True})
+            return
+
+        if self.path == "/api/configure-provider":
+            provider = payload.get("provider", "")
+            key = payload.get("api_key", "")
+            if provider not in AI_PROVIDERS:
+                self.send_json(400, {"error": "Choose Anthropic, Gemini, or Groq."})
+                return
+            if not isinstance(key, str) or not 20 <= len(key.strip()) <= 300:
+                self.send_json(400, {"error": "Enter a valid provider API key."})
+                return
+            try:
+                self.engine.save_provider_key(provider, key.strip())
+            except Exception as exc:
+                print(f"[credential store error] {exc}")
+                self.send_json(500, {"error": "Windows could not save the key to its credential store."})
+                return
+            self.send_json(200, {"ok": True, "api_ready": True, "provider": provider})
+            return
+
+        if self.path == "/api/select-provider":
+            provider = payload.get("provider", "")
+            if provider not in AI_PROVIDERS:
+                self.send_json(400, {"error": "Choose Anthropic, Gemini, or Groq."})
+                return
+            try:
+                self.engine.select_provider(provider)
+            except Exception as exc:
+                print(f"[credential store error] {exc}")
+                self.send_json(500, {"error": "Windows could not update the active provider."})
+                return
+            self.send_json(200, {"ok": True, "api_ready": bool(self.engine.api_key), "provider": provider})
             return
 
         self.send_error(404)
