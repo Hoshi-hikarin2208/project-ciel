@@ -3,6 +3,8 @@
 # Ciel records microphone audio with sounddevice.
 
 requests>=2.32
+keyring>=25.6
+sympy>=1.14
 SpeechRecognition>=3.14
 pyttsx3>=2.99
 psutil>=7.0
